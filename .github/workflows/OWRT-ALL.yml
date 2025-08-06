@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       #max-parallel: 3
       matrix:
-        CONFIG: [MEDIATEK, ROCKCHIP, X86, MEDIATEK-Docker, ROCKCHIP-Docker, X86-Docker]
+        CONFIG: [MEDIATEK-Docker]
         SOURCE: [fanlepian1/immortalwrt]
         BRANCH: [FanWRT]
 
