@@ -33,7 +33,7 @@ jobs:
       #max-parallel: 3
       matrix:
         CONFIG: []
-        SOURCE: [VIKINGYFY/immortalwrt]
+        SOURCE: [fanlepian1/immortalwrt]
         BRANCH: [main]
 
     #调用公用编译核心WRT-CORE.yml
