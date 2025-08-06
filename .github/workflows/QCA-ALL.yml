@@ -34,7 +34,7 @@ jobs:
       matrix:
         CONFIG: [IPQ60XX-WIFI-YES, IPQ60XX-WIFI-NO, IPQ807X-WIFI-YES, IPQ807X-WIFI-NO, IPQ50XX-WIFI-YES, IPQ50XX-WIFI-NO]
         SOURCE: [fanlepian1/immortalwrt]
-        BRANCH: [main]
+        BRANCH: [NSS-FanWRT]
 
     #调用公用编译核心WRT-CORE.yml
     uses: ./.github/workflows/WRT-CORE.yml
