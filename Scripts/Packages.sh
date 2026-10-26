@@ -54,9 +54,14 @@ UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "sing-box luci-app-homepr
 rm -rf ./package/UA3F
 git clone --depth=1 --single-branch --branch master https://github.com/SunBK201/UA3F.git ./package/UA3F
 
-# ============ 本地自定义插件（GIWIFI 校园网自动登录） ============
-rm -rf ./package/luci-app-giwifi
-cp -rf "$GITHUB_WORKSPACE/Packages/luci-app-giwifi" ./package/
+# ============ 本地自定义包（luci-app-giwifi、kmod-usb-printer 等） ============
+for PKG_DIR in "$GITHUB_WORKSPACE"/Packages/*/; do
+	[ -d "$PKG_DIR" ] || continue
+	PKG_LOCAL=$(basename "$PKG_DIR")
+	echo "Install local package: $PKG_LOCAL"
+	rm -rf "./package/$PKG_LOCAL"
+	cp -rf "$PKG_DIR" ./package/
+done
 
 #更新软件包版本
 UPDATE_VERSION() {

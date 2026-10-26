@@ -35,8 +35,9 @@
 
 OpenWrt 的 `hplip` 源包只编译了 Sane 扫描后端（上游 Makefile 带 `--disable-hpcups-install`），P1108 这类主机型打印机**不靠它出纸**。实际有两条路，都已内置：
 
+0. **先有设备节点**：上游 `kmod-usb-printer` 依赖了一个本源码树里没定义的 `printer-support`，导致 `qualcommbe` 上这个包根本不可选、`/dev/usb/lp0` 不会出现。本仓库用 `Packages/kmod-usb-printer/` 本地重建了同一份 kmod（`KCONFIG:=CONFIG_USB_PRINTER`、`FILES:=usblp.ko`、`AutoProbe usblp`），所以插上 P1108 后应该能看到 `/dev/usb/lp0`，`luci-app-usb-printer` 也能装了。
 1. **p910nd（推荐，最省事）**：`服务 → 打印服务器` 里启用，设备选 `/dev/usb/lp0`，端口 9100。Windows 上添加"标准 TCP/IP 端口 → 路由器 IP:9100"，驱动选 HP LaserJet Professional P1100 系列。
-2. **CUPS**：浏览器打开 `http://192.168.10.1:631`，添加 **Raw / 原始** 队列指向 `usb://HP/LaserJet%20Professional%20P1108`，客户端同样用 HP 驱动。
+2. **CUPS**：浏览器打开 `http://192.168.10.1:631`，添加 **Raw / 原始** 队列指向 `usb://HP/LaserJet%20Professional%20P1108`，客户端同样用 HP 驱动。CUPS 自带 libusb 版 `backend/usb`，不依赖 usblp。
 
 扫描功能由 `hplip-sane` + `sane-backends` 提供（`scanimage -L` 能识别即可）。
 
