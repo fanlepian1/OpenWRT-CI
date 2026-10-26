@@ -129,8 +129,8 @@ do_login() {
 	log "登录响应：$(printf '%s' "$resp" | tr -d '\r\n' | cut -c1-160)"
 
 	case "$resp" in
-		*成功*|*"code\":0"*|*success*) return 0 ;;
-		*失败*|*错误*|*"code\":1*) return 1 ;;
+		*成功*|*success*|*Success*) return 0 ;;
+		*失败*|*错误*|*error*|*Error*) return 1 ;;
 	esac
 
 	# 响应无法判断时，用实际联网结果兜底
