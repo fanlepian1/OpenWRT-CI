@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -x /etc/init.d/giwifi ] && /etc/init.d/giwifi enable >/dev/null 2>&1
+rm -f /tmp/luci-indexcache* >/dev/null 2>&1
+exit 0

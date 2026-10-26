@@ -1,0 +1,17 @@
+{
+	"luci-app-giwifi": {
+		"description": "Grant access to GIWIFI campus network auto login",
+		"read": {
+			"uci": [ "giwifi" ]
+		},
+		"write": {
+			"uci": [ "giwifi" ],
+			"ubus": {
+				"service": [ "restart" ]
+			},
+			"file": {
+				"/var/log/giwifi.log": [ "read", "write" ]
+			}
+		}
+	}
+}

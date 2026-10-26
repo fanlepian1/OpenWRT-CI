@@ -1,0 +1,13 @@
+{
+	"admin/services/giwifi": {
+		"title": "GIWIFI 自动登录",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "giwifi/login"
+		},
+		"depends": {
+			"acl": [ "luci-app-giwifi" ]
+		}
+	}
+}

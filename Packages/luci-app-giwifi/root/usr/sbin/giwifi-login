@@ -1,0 +1,192 @@
+#!/bin/sh
+# GIWIFI 校园网自动登录（FanWRT 定制）
+#
+# 原理：抓取门户登录页 -> 读取表单隐藏域 -> 用门户前端同一套 AES-128-CBC
+#       （zeropadding + base64）加密帐号密码表单 -> POST 到 /gportal/Web/loginAction
+# 用法：giwifi-login [--once|--daemon]
+
+export LC_ALL=C
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+LOG_FILE=/var/log/giwifi.log
+COOKIE_JAR=/tmp/giwifi.cookie
+TMP_TAGS=/tmp/giwifi.tags
+TMP_PLAIN=/tmp/giwifi.plain
+
+log() {
+	logger -t giwifi "$*" 2>/dev/null
+	printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG_FILE"
+}
+
+urlencode() {
+	local s="$1" out="" c
+
+	while [ -n "$s" ]; do
+		c="${s%"${s#?}"}"
+		case "$c" in
+			[A-Za-z0-9.~_-]) out="$out$c" ;;
+			*) out="$out$(printf '%%%02X' "'$c")" ;;
+		esac
+		s="${s#?}"
+	done
+
+	printf '%s' "$out"
+}
+
+hexstr() {
+	printf '%s' "$1" | od -An -tx1 | tr -d ' \n'
+}
+
+load_conf() {
+	config_load giwifi
+	config_get GATEWAY login gateway 'http://100.100.9.2'
+	config_get USERNAME login username ''
+	config_get PASSWORD login password ''
+	config_get AES_KEY login key '1234567887654321'
+	config_get USER_AGENT login user_agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+	config_get CHECK_URL login check_url 'http://connect.rom.miui.com/generate_204'
+	config_get INTERVAL login interval '300'
+
+	GATEWAY="${GATEWAY%/}"
+	[ -n "$INTERVAL" ] || INTERVAL=300
+}
+
+# 联网检测：200/204 认为在线
+check_online() {
+	local code
+
+	code=$(curl -s -o /dev/null -m 8 -w '%{http_code}' "$CHECK_URL" 2>/dev/null)
+	[ "$code" = "204" ] || [ "$code" = "200" ]
+}
+
+do_login() {
+	local page form tag name val iv plain pad cipher resp size
+
+	rm -f "$COOKIE_JAR" "$TMP_TAGS" "$TMP_PLAIN"
+
+	page=$(curl -sS -m 15 --connect-timeout 5 -c "$COOKIE_JAR" -A "$USER_AGENT" \
+		"$GATEWAY/gportal/web/login" 2>/dev/null)
+	if [ -z "$page" ]; then
+		log "打开认证页失败：$GATEWAY/gportal/web/login"
+		return 1
+	fi
+
+	form=$(printf '%s' "$page" | tr '\r\n' '  ' | \
+		sed -n 's:.*\(<form[^>]*id="loginForm"[^>]*>.*</form>\).*:\1:p')
+	[ -n "$form" ] || form=$(printf '%s' "$page" | tr '\r\n' '  ')
+
+	printf '%s' "$form" | grep -o -i '<input[^>]*>' >"$TMP_TAGS" 2>/dev/null
+
+	iv=""
+	plain=""
+	while IFS= read -r tag; do
+		name=$(printf '%s' "$tag" | sed -n 's/.*[Nn][Aa][Mm][Ee]="\([^"]*\)".*/\1/p')
+		[ -n "$name" ] || continue
+		val=$(printf '%s' "$tag" | sed -n 's/.*[Vv][Aa][Ll][Uu][Ee]="\([^"]*\)".*/\1/p')
+		val=$(printf '%s' "$val" | sed "s/&amp;/\&/g")
+
+		case "$name" in
+			user_account) val="$USERNAME" ;;
+			user_password) val="$PASSWORD" ;;
+			iv) iv="$val" ;;
+		esac
+
+		plain="$plain${plain:+&}$name=$(urlencode "$val")"
+	done <"$TMP_TAGS"
+
+	if [ -z "$plain" ]; then
+		log "认证页中没有找到登录表单，可能当前已经在线"
+		return 1
+	fi
+
+	if [ -z "$iv" ]; then
+		log "认证页缺少 iv 参数，门户结构可能已变更"
+		return 1
+	fi
+
+	# 构造 AES-128-CBC(zeropadding) + base64 密文
+	printf '%s' "$plain" >"$TMP_PLAIN"
+	size=${#plain}
+	pad=$(( (16 - size % 16) % 16 ))
+	if [ "$pad" -gt 0 ]; then
+		dd if=/dev/zero bs=1 count="$pad" >>"$TMP_PLAIN" 2>/dev/null
+	fi
+
+	cipher=$(openssl enc -aes-128-cbc -nopad \
+		-K "$(hexstr "$AES_KEY")" -iv "$(hexstr "$iv")" \
+		-in "$TMP_PLAIN" 2>/dev/null | base64 | tr -d '\n')
+
+	if [ -z "$cipher" ]; then
+		log "AES 加密失败，请检查密钥长度（默认 16 字节）"
+		return 1
+	fi
+
+	resp=$(curl -sS -m 20 --connect-timeout 5 -b "$COOKIE_JAR" -c "$COOKIE_JAR" -A "$USER_AGENT" \
+		-H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' \
+		--data "data=$(urlencode "$cipher")&iv=$(urlencode "$iv")" \
+		"$GATEWAY/gportal/Web/loginAction" 2>/dev/null)
+
+	log "登录响应：$(printf '%s' "$resp" | tr -d '\r\n' | cut -c1-160)"
+
+	case "$resp" in
+		*成功*|*"code\":0"*|*success*) return 0 ;;
+		*失败*|*错误*|*"code\":1*) return 1 ;;
+	esac
+
+	# 响应无法判断时，用实际联网结果兜底
+	check_online
+}
+
+daemon_loop() {
+	local fails
+
+	fails=0
+	while :; do
+		load_conf
+
+		if [ -z "$USERNAME" ]; then
+			log "尚未配置 GIWIFI 帐号，60 秒后再检查"
+			sleep 60
+			continue
+		fi
+
+		if check_online; then
+			fails=0
+			sleep "$INTERVAL"
+			continue
+		fi
+
+		log "检测到未联网，开始 GIWIFI 认证 ..."
+		if do_login; then
+			log "GIWIFI 认证成功"
+			fails=0
+			sleep "$INTERVAL"
+		else
+			fails=$((fails + 1))
+			if [ "$fails" -gt 5 ]; then
+				log "认证失败第 $fails 次，60 秒后重试"
+				sleep 60
+			else
+				log "认证失败第 $fails 次，15 秒后重试"
+				sleep 15
+			fi
+		fi
+	done
+}
+
+. /lib/functions.sh
+
+case "$1" in
+	--once)
+		load_conf
+		if check_online; then
+			log "当前已联网，无需认证"
+			exit 0
+		fi
+		do_login
+		exit $?
+		;;
+	*)
+		daemon_loop
+		;;
+esac

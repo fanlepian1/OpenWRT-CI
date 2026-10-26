@@ -1,6 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 VIKINGYFY
+# FanWRT：仅保留京东云 BE6500 需要的第三方插件
 
 #安装和更新软件包
 UPDATE_PACKAGE() {
@@ -41,56 +42,21 @@ UPDATE_PACKAGE() {
 	fi
 }
 
-# 调用示例
-# UPDATE_PACKAGE "OpenAppFilter" "destan19/OpenAppFilter" "master" "" "custom_name1 custom_name2"
-# UPDATE_PACKAGE "open-app-filter" "destan19/OpenAppFilter" "master" "" "luci-app-appfilter oaf" 这样会把原有的open-app-filter，luci-app-appfilter，oaf相关组件删除，不会出现coremark错误。
-
-# UPDATE_PACKAGE "包名" "项目地址" "项目分支" "pkg，可选，从大杂烩中单独提取包名插件"
-UPDATE_PACKAGE "argon" "sbwml/luci-theme-argon" "openwrt-25.12"
+# ============ 主题 ============
 UPDATE_PACKAGE "aurora" "eamonxg/luci-theme-aurora" "master"
 UPDATE_PACKAGE "aurora-config" "eamonxg/luci-app-aurora-config" "master"
-UPDATE_PACKAGE "fluent" "LazuliKao/luci-theme-fluent" "main"
-UPDATE_PACKAGE "footstrap" "VizzleTF/luci-theme-footstrap" "main"
-UPDATE_PACKAGE "kucat" "sirpdboy/luci-theme-kucat" "master"
-UPDATE_PACKAGE "kucat-config" "sirpdboy/luci-app-kucat-config" "master"
-UPDATE_PACKAGE "shadcn" "eamonxg/luci-theme-shadcn" "main"
 
-UPDATE_PACKAGE "momo" "nikkinikki-org/OpenWrt-momo" "main"
-UPDATE_PACKAGE "nikki" "nikkinikki-org/OpenWrt-nikki" "main"
-UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
-UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
-UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
+# ============ 科学上网（HomeProxy + sing-box 内核） ============
+UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "sing-box luci-app-homeproxy"
 
-UPDATE_PACKAGE "diskmanager" "4IceG/luci-app-mini-diskmanager" "main"
-UPDATE_PACKAGE "easytier" "EasyTier/luci-app-easytier" "main"
-UPDATE_PACKAGE "qmodem" "FUjr/QModem" "main"
-UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "axonhub gecoosac sing-box luci-app-homeproxy luci-app-timewol luci-app-wolplus luci-app-wolultra"
-UPDATE_PACKAGE "vnt" "lmq8267/luci-app-vnt" "main"
+# ============ UA3F：HTTP(S) User-Agent 重写代理 ============
+# 官方推荐做法：整个仓库放进 package/UA3F，由其 openwrt/Makefile 编译
+rm -rf ./package/UA3F
+git clone --depth=1 --single-branch --branch master https://github.com/SunBK201/UA3F.git ./package/UA3F
 
-UPDATE_PACKAGE "diskman" "sbwml/luci-app-diskman" "main"
-UPDATE_PACKAGE "mosdns" "sbwml/luci-app-mosdns" "v5" "" "v2dat"
-UPDATE_PACKAGE "openlist2" "sbwml/luci-app-openlist2" "main"
-UPDATE_PACKAGE "qbittorrent" "sbwml/luci-app-qbittorrent" "master" "" "qt6base qt6tools rblibtorrent"
-UPDATE_PACKAGE "quickfile" "sbwml/luci-app-quickfile" "main"
-
-UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
-UPDATE_PACKAGE "netspeedtest" "sirpdboy/netspeedtest" "main" "" "homebox ookla-speedtest"
-UPDATE_PACKAGE "netwizard" "sirpdboy/luci-app-netwizard" "main"
-UPDATE_PACKAGE "partexp" "sirpdboy/luci-app-partexp" "main"
-UPDATE_PACKAGE "timecontrol" "sirpdboy/luci-app-timecontrol" "main"
-
-UPDATE_PACKAGE "natmapt" "muink/openwrt-natmapt" "master"
-UPDATE_PACKAGE "stuntman" "muink/openwrt-stuntman" "master"
-UPDATE_PACKAGE "luci-app-natmapt" "muink/luci-app-natmapt" "master"
-
-UPDATE_PACKAGE "airpi3000m-fancontrol" "LianXia233/luci-app-airpi3000m-fancontrol" "main"
-UPDATE_PACKAGE "chfs" "LianXia233/luci-app-chfs" "main"
-UPDATE_PACKAGE "fm350" "LianXia233/luci-app-fm350" "main"
-UPDATE_PACKAGE "h5000m-netmode" "LianXia233/luci-app-h5000m-netmode" "main"
-UPDATE_PACKAGE "mt5700" "LianXia233/luci-app-mt5700" "main"
-UPDATE_PACKAGE "mt5700m" "LianXia233/luci-app-mt5700m" "main"
-UPDATE_PACKAGE "netmonitor" "LianXia233/luci-app-netmonitor" "main"
-UPDATE_PACKAGE "qmodem-generic" "LianXia233/luci-app-qmodem-generic" "main"
+# ============ 本地自定义插件（GIWIFI 校园网自动登录） ============
+rm -rf ./package/luci-app-giwifi
+cp -rf "$GITHUB_WORKSPACE/Packages/luci-app-giwifi" ./package/
 
 #更新软件包版本
 UPDATE_VERSION() {
