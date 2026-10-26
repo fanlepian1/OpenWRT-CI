@@ -1,0 +1,237 @@
+#!/bin/sh
+# fanmac —— 京东云 BE6500 / IPQ53XX 刷大分区后 factory 丢失的 MAC 兜底
+#
+# 背景：qualcommbe 的 DTS 把 lan1..4 / wan / wifi0 / wifi1 的 MAC 都挂到
+#   &sdhc { card@0 { block { partitions { block-partition-factory {
+#       partname = "factory"; nvmem-layout { lan_macaddr@0 / wan_macaddr@6 } }}}}}
+# 刷常规大分区后 GPT 里没有 factory 分区，nvmem cell 解析失败，所有网口 MAC 变成
+# 00:00:00:00:00:00。内核 br_add_if() 拒绝把全零 MAC 的端口加进桥，于是
+# br-lan 起不来、有线拿不到 IP；wifi 的 nvmem 取 MAC 也一起失败。
+#
+# 本脚本在 netifd / wpad 之前运行：
+#   1. 能读到 factory 就沿用真实 MAC（factory 还在的机器行为不变）
+#   2. 读不到就用 /etc/fanmac.macs 里的持久化值
+#   3. 都没有就从 SoC 序列号 / eMMC CID 派生一个本机管理单播地址并写盘
+#   4. 写进 /etc/config/network 的 device 段、/etc/config/wireless 的 macaddr
+#   5. 立刻 ip link set 一遍，保证本次启动建桥时 MAC 不再是全零
+#
+# 用法：fanmac [apply|show|reset]
+
+export LC_ALL=C
+
+STATE=/etc/fanmac.macs
+FACTORY_DEVS="/dev/disk/by-partlabel/factory /dev/mmcblk0p25"
+
+CHANGED_NET=""
+CHANGED_WIFI=""
+
+log() { logger -t fanmac "$*" 2>/dev/null; }
+
+cfg_get() {
+	uci -q get "fanmac.settings.$1" 2>/dev/null
+}
+
+mac_valid() {
+	case "$1" in
+		""|00:00:00:00:00:00|ff:ff:ff:ff:ff:ff) return 1 ;;
+	esac
+	printf '%s' "$1" | grep -qiE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || return 1
+	first=$(printf '%d' "0x${1%%:*}" 2>/dev/null)
+	[ -n "$first" ] || return 1
+	[ $((first & 1)) -eq 0 ] || return 1
+	return 0
+}
+
+# mac_read_at <块设备> <偏移> —— 读 6 字节当 MAC
+mac_read_at() {
+	[ -r "$1" ] || return 1
+	hex=$(od -An -v -tx1 -j "$2" -N 6 "$1" 2>/dev/null | tr -d ' \n')
+	[ ${#hex} -eq 12 ] || return 1
+	m=$(printf '%s' "$hex" | sed 's/\(..\)/\1:/g; s/:$//')
+	mac_valid "$m" || return 1
+	printf '%s' "$m"
+}
+
+# mac_add <mac> <n> —— 只加最后一个字节
+mac_add() {
+	last=$(printf '%d' "0x${1##*:}" 2>/dev/null)
+	[ -n "$last" ] || { printf '%s' "$1"; return; }
+	last=$(( (last + $2) % 256 ))
+	printf '%s:%02x' "${1%:*}" "$last"
+}
+
+state_get() {
+	[ -r "$STATE" ] || return 1
+	v=$(sed -n "s/^$1=//p" "$STATE" 2>/dev/null | head -n 1)
+	[ -n "$v" ] || return 1
+	printf '%s' "$v"
+}
+
+state_set() {
+	[ -f "$STATE" ] || : >"$STATE"
+	sed -i "/^$1=/d" "$STATE" 2>/dev/null
+	printf '%s=%s\n' "$1" "$2" >>"$STATE"
+}
+
+gen_base() {
+	seed=""
+	for f in /sys/devices/soc0/serial_number /proc/device-tree/serial-number \
+		 /sys/block/mmcblk0/device/cid /proc/device-tree/model; do
+		[ -r "$f" ] || continue
+		seed="$seed$(cat "$f" 2>/dev/null)"
+	done
+	if [ -z "$seed" ]; then
+		seed="$(date +%s)-$(cat /proc/sys/kernel/random/uuid 2>/dev/null)"
+	fi
+	h=$(printf '%s' "$seed" | md5sum | cut -c1-10)
+	m=$(printf '%s' "$h" | sed 's/\(..\)/\1:/g; s/:$//')
+	# 02 开头 = 本机管理 + 单播
+	printf '02:%s' "$m"
+}
+
+resolve() {
+	LAN=""
+	WAN=""
+
+	# 1) 手动指定优先
+	LAN=$(cfg_get lan_mac)
+	mac_valid "$LAN" || LAN=""
+	WAN=$(cfg_get wan_mac)
+	mac_valid "$WAN" || WAN=""
+
+	# 2) factory 分区（真实 MAC）
+	if [ -z "$LAN" ]; then
+		for d in $FACTORY_DEVS; do
+			LAN=$(mac_read_at "$d" 0) && break
+		done
+	fi
+	if [ -z "$WAN" ]; then
+		for d in $FACTORY_DEVS; do
+			WAN=$(mac_read_at "$d" 6) && break
+		done
+	fi
+
+	# 3) 之前持久化的兜底值
+	[ -n "$LAN" ] || LAN=$(state_get lan)
+	[ -n "$WAN" ] || WAN=$(state_get wan)
+
+	# 4) 派生
+	if ! mac_valid "$LAN"; then
+		LAN=$(gen_base)
+		log "factory 不可用，派生兜底 LAN MAC: $LAN"
+	fi
+	if ! mac_valid "$WAN"; then
+		WAN=$(mac_add "$LAN" 8)
+		log "factory 不可用，派生兜底 WAN MAC: $WAN"
+	fi
+
+	state_set lan "$LAN"
+	state_set wan "$WAN"
+}
+
+uci_set_device_mac() {
+	sec="mac_$1"
+	uci -q get "network.$sec" >/dev/null 2>&1 || uci -q set "network.$sec=device"
+	uci -q set "network.$sec.name=$1"
+	uci -q set "network.$sec.macaddr=$2"
+	CHANGED_NET=1
+}
+
+apply_wired() {
+	i=0
+	for d in $(ls /sys/class/net 2>/dev/null | grep -E '^(lan[0-9]*|wan[0-9]*|eth[0-9]*)$' | sort); do
+		case "$d" in
+			wan*) m="$WAN" ;;
+			*)
+				m=$(mac_add "$LAN" "$i")
+				i=$((i + 1))
+				;;
+		esac
+
+		ip link set dev "$d" down 2>/dev/null
+		if ip link set dev "$d" address "$m" 2>/dev/null; then
+			log "$d -> $m"
+		else
+			log "$d 立即设置失败，交给 netifd 在拉起时设置"
+		fi
+		uci_set_device_mac "$d" "$m"
+	done
+}
+
+apply_bridge() {
+	[ "$(cfg_get bridge)" = "0" ] && return 0
+	for sec in $(uci show network 2>/dev/null | sed -n "s/^\(network\.[^.=]*\)\.name='\{0,1\}br-lan'\{0,1\}\$/\1/p"); do
+		uci -q set "$sec.macaddr=$LAN"
+		CHANGED_NET=1
+		log "br-lan -> $LAN"
+	done
+}
+
+apply_wireless() {
+	[ "$(cfg_get wireless)" = "0" ] && return 0
+
+	i=4
+	for sec in $(uci show wireless 2>/dev/null | sed -n "s/^\(wireless\.[^.=]*\)=wifi-iface\$/\1/p"); do
+		m=$(mac_add "$LAN" "$i")
+		i=$((i + 1))
+		cur=$(uci -q get "$sec.macaddr" 2>/dev/null)
+		[ "$cur" = "$m" ] && continue
+		uci -q set "$sec.macaddr=$m"
+		CHANGED_WIFI=1
+		log "wifi-iface $sec -> $m"
+	done
+}
+
+commit_all() {
+	if [ -n "$CHANGED_NET" ]; then
+		uci -q commit network
+	fi
+	if [ -n "$CHANGED_WIFI" ]; then
+		uci -q commit wireless
+	fi
+}
+
+do_apply() {
+	[ "$(cfg_get enabled)" = "0" ] && { log "未启用，跳过"; return 0; }
+
+	resolve
+	log "使用 LAN MAC=$LAN WAN MAC=$WAN"
+
+	apply_wired
+	apply_bridge
+	apply_wireless
+	commit_all
+
+	# 兜底：MAC 要是不合法，bridge 还是起不来，这里再校验一次
+	for d in $(ls /sys/class/net 2>/dev/null | grep -E '^(lan[0-9]*|wan[0-9]*|eth[0-9]*)$'); do
+		cur=$(cat "/sys/class/net/$d/address" 2>/dev/null)
+		mac_valid "$cur" || log "警告：$d 的 MAC 仍然是 $cur"
+	done
+}
+
+do_show() {
+	echo "== 配置 =="
+	uci -q show fanmac 2>/dev/null
+	echo "== 持久化 =="
+	[ -r "$STATE" ] && cat "$STATE" || echo "(无 $STATE)"
+	echo "== 当前网口 =="
+	ip -o link 2>/dev/null | grep -E ' (lan|wan|eth)[0-9]+' | sed 's/\\/ /g'
+}
+
+case "$1" in
+	show)
+		do_show
+		;;
+	reset)
+		rm -f "$STATE"
+		log "已清除 $STATE，重新派生"
+		do_apply
+		;;
+	apply|"")
+		do_apply
+		;;
+	*)
+		echo "用法: $0 [apply|show|reset]" >&2
+		exit 1
+		;;
+esac

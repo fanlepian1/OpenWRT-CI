@@ -1,0 +1,9 @@
+config fanmac 'settings'
+	option enabled '1'
+	# 是否同时给 wifi-iface 写 macaddr
+	option wireless '1'
+	# 是否给 br-lan 写 macaddr
+	option bridge '1'
+	# 手动指定，留空表示自动（factory 分区 -> 持久化值 -> 派生）
+	option lan_mac ''
+	option wan_mac ''
