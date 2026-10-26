@@ -282,6 +282,8 @@ jobs:
           fi
 
       - name: Release Firmware
+        id: release_step
+        continue-on-error: true
         uses: softprops/action-gh-release@master
         with:
           tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}
@@ -308,6 +310,51 @@ jobs:
 
             内核版本：${{env.WRT_KVER}}
             插件列表：${{env.WRT_LIST}}
+
+      # GitHub 偶发 500 时用 gh 兜底发布，避免白编一次
+      - name: Release Firmware (gh fallback)
+        if: ${{ steps.release_step.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          GH_REPO: ${{github.repository}}
+          TAG: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}
+        run: |
+          set -uo pipefail
+
+          cat > release-notes.md <<EOF
+          这是个平台固件包，内含多个设备！
+          请注意选择你需要的设备固件！
+
+          源码：${WRT_REPO}
+          分支：${WRT_BRANCH}
+          提交：${WRT_HASH}
+
+          配置：${WRT_CONFIG}
+          平台：${WRT_TARGET}
+
+          登录地址：${WRT_IP}
+          登录密码：${WRT_PW}
+
+          WIFI名称：${WRT_SSID}
+          WIFI密码：${WRT_WORD}
+
+          内核版本：${WRT_KVER}
+          插件列表：${WRT_LIST}
+          EOF
+
+          for i in 1 2 3 4 5; do
+            if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+              gh release upload "$TAG" ./wrt/upload/*.* --clobber --repo "$GH_REPO" && exit 0
+            else
+              gh release create "$TAG" ./wrt/upload/*.* \
+                --repo "$GH_REPO" --title "$TAG" --notes-file release-notes.md && exit 0
+            fi
+            echo "release attempt $i failed, retrying in 15s ..."
+            sleep 15
+          done
+
+          echo "release failed after 5 attempts"
+          exit 1
 
   cache-rollover:
     name: Roll cache generations
