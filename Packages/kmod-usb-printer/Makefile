@@ -32,4 +32,12 @@ define KernelPackage/usb-printer/description
  Kernel support for USB printers (usblp, creates /dev/usb/lp0)
 endef
 
+# usblp 是内核树内的模块：真正的编译发生在 package/kernel/linux 里
+# （选了本包的 KCONFIG 后 CONFIG_USB_PRINTER=m 会写进内核 .config），
+# 这里只需要把 $(LINUX_DIR)/drivers/usb/class/usblp.ko 装进包，
+# 所以必须显式给一个空的 Build/Compile，否则会走默认的
+# "make -C build_dir/kmod-usb-printer"（无 Makefile）而失败。
+define Build/Compile
+endef
+
 $(eval $(call KernelPackage,usb-printer))
