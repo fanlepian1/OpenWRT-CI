@@ -6,6 +6,8 @@
 #   修 qcom-ppe deferred probe（有线口一个都不出来）
 # Patches/jdcloud-re-cs-06-qca4b-pppoe.patch
 #   QCA4B 持久 VP 允许承载 tagged PPPoE，PPE 才能对 PPPoE 生效
+# Patches/jdcloud-re-cs-06-fixed-mac.patch
+#   网口/Wi-Fi 的 MAC 改由 DT 的 mac-address 提供，去掉对 ART/factory 的依赖
 
 set -uo pipefail
 
@@ -39,3 +41,4 @@ APPLY() {
 
 APPLY "jdcloud-re-cs-06-emmc-mac-nvmem.patch"
 APPLY "jdcloud-re-cs-06-qca4b-pppoe.patch"
+APPLY "jdcloud-re-cs-06-fixed-mac.patch"

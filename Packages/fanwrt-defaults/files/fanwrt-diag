@@ -1,0 +1,35 @@
+#!/bin/sh
+# FanWRT 诊断：网口/MAC/分区/PPE 一把抓，直接整段贴出来
+echo "===== 系统 ====="
+cat /etc/openwrt_release 2>/dev/null | head -5
+uname -a
+
+echo
+echo "===== 网口（应有 lan1..4 / wan） ====="
+ip -o link 2>/dev/null | sed 's/\\/ /g'
+
+echo
+echo "===== /dev/disk/by-partlabel ====="
+ls -l /dev/disk/by-partlabel/ 2>/dev/null || echo "(空：DT 里的分区节点没绑定)"
+
+echo
+echo "===== GPT 分区名 ====="
+sgdisk -p /dev/mmcblk0 2>/dev/null || echo "(无 sgdisk)"
+
+echo
+echo "===== deferred 设备（PPE 卡在这里就是 MAC/nvmem 问题） ====="
+cat /sys/kernel/debug/devices_deferred 2>/dev/null || echo "(没有 debugfs 或没有 deferred)"
+
+echo
+echo "===== PPE / nvmem / DSA 相关 dmesg ====="
+dmesg 2>/dev/null | grep -iE 'ppe|nvmem|dsa|qca8|art|deferred|edma' | tail -80
+
+echo
+echo "===== 网桥成员 ====="
+ip link show master br-lan 2>/dev/null || echo "(br-lan 没有成员)"
+
+echo
+echo "===== 当前各口 MAC ====="
+for d in lan1 lan2 lan3 lan4 wan; do
+	[ -e "/sys/class/net/$d" ] && echo "$d $(cat /sys/class/net/$d/address)"
+done

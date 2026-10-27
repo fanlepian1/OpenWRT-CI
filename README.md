@@ -10,27 +10,27 @@
 
 ## 有线口的修复（MAC / PPE deferred probe）
 
-上游 DTS 把 lan1..4、wan、wifi0/wifi1 的 MAC 都挂在 **legacy** 的 `block / block-device / partname="factory"` 上：
+上游 DTS 把 lan1..4、wan、wifi0/wifi1 的 MAC 都挂在 nvmem cell 上（`lan_macaddr` / `wan_macaddr`，来自 `block/block-device/partname="factory"` 的 ART/factory 分区）。
+
+`of_get_mac_address()` 的顺序是**先查 nvmem**、再查 `mac-address`。只要 DTS 里还挂着 `nvmem-cells`，而那个分区节点没有绑定（GPT 里没有对应名字，或者分区被重刷掉了），`nvmem_get_mac_address()` 就返回 `-EPROBE_DEFER`，树里的 `0526-01-net-ethernet-qualcomm-ppe-defer-for-nvmem-mac` 会让 `ppe_port_mac_prepare()` 继续 defer —— **qcom-ppe 永远停在 deferred probe，lan1..4 / wan 一个都不出现**，br-lan 没有成员，有线自然拿不到 IP。表现就是"设备不存在"。
+
+所以分两层修（都在 `Patches/`，由 `Scripts/Patches.sh` 应用，失败会让构建直接红掉）：
+
+1. `jdcloud-re-cs-06-emmc-mac-nvmem.patch`：分区节点从 legacy `block/block-device` 换成 `gpt-partitions` + `partname="0:ART"`（厂商 GPT 里 ART 的名字）。**这一层只在 GPT 真有 `0:ART` 时生效。**
+2. `jdcloud-re-cs-06-fixed-mac.patch`：**根治层** —— 把 6 个消费者的 `nvmem-cells` 全删掉，直接给 `mac-address`：
 
 ```dts
-card@0 { compatible = "mmc-card";
-    block { compatible = "block-device";
-        partitions { block-partition-factory { partname = "factory"; … } }; }; };
+port@1 { label = "lan1"; mac-address = [02 46 57 00 00 01]; };
+port@2 { label = "lan2"; mac-address = [02 46 57 00 00 02]; };
+port@3 { label = "lan3"; mac-address = [02 46 57 00 00 03]; };
+port@4 { label = "wan";  mac-address = [02 46 57 00 00 11]; };
+&wifi0 { mac-address = [02 46 57 00 00 21]; };
+&wifi1 { mac-address = [02 46 57 00 00 22]; };
 ```
 
-这条老路径在 qualcommbe 上**不会注册 NVMEM provider**（内核侧有 `0526-01-net-ethernet-qualcomm-ppe-defer-for-nvmem-mac`），于是 `qcom-ppe` 永远停在 deferred probe：**lan1..4 / wan 一个都不出现**，`br-lan` 没成员，有线拿不到 IP，wifi 的 MAC 也一起取不到。
+这样 `of_get_mac_address()` 直接命中 `mac-address`，完全不碰 nvmem，PPE 立刻 probe，**不依赖任何分区存不存在**。
 
-厂商 GPT 里这个分区叫 **`0:ART`**，并且要挂在 `gpt-partitions` 节点下。本仓库用 `Patches/jdcloud-re-cs-06-emmc-mac-nvmem.patch` 改成了：
-
-```dts
-card@0 { compatible = "mmc-card";
-    partitions { compatible = "gpt-partitions";
-        block-partition-art { partname = "0:ART"; … }; }; };
-```
-
-构建时由 `Scripts/Patches.sh` 应用（应用失败会让构建直接失败，不会悄悄出个没网口的固件）。
-
-前提：设备的 GPT 里要有名为 `0:ART` 的分区 —— 刷机后 `ls /dev/disk/by-partlabel/` 能看到 `0:ART` 就说明对上了。
+之后 `fanwrt-defaults` 的 `50-fanwrt-mac` 会按 SoC 序列号派生一套唯一 MAC 写进 UCI（避免同一份固件刷多台撞 MAC）；想改就在 `network` 的 `mac_lan1..4` / `mac_wan` 段或 `wireless` 的 `macaddr` 里改。
 
 ## PPE 硬件加速
 
@@ -103,7 +103,7 @@ Scripts/Handles.sh             插件补丁（argon 配色/菜单）
 Patches/                       jdcloud-re-cs-06 的 DTS 与 PPPoE 补丁
 Packages/luci-app-giwifi/      GIWIFI 校园网自动登录插件
 Packages/kmod-usb-printer/     本地重建的 usblp（修上游悬空依赖）
-Packages/fanwrt-defaults/      默认项：flow offload + PPE 硬件卸载
+Packages/fanwrt-defaults/      默认项：flow offload + PPE 卸载、MAC 派生、fanwrt-diag
 ```
 
 ## 刷机提醒
@@ -112,12 +112,21 @@ BE6500 需先刷好 U-Boot（Web 后台 `192.168.3.3`）再刷本固件；建议
 
 刷完先确认：
 
+一条命令看全部（固件自带）：
+
 ```sh
-ls /dev/disk/by-partlabel/                     # 应有 0:ART
-ip -o link | grep -E ' (lan|wan)[0-9]*'        # lan1..4 / wan 都在
-cat /sys/class/net/lan1/address                # 不是 00:00:00:00:00:00
+fanwrt-diag
+```
+
+它会打印：网口列表、`/dev/disk/by-partlabel`、`sgdisk -p /dev/mmcblk0` 的 GPT 分区名、`/sys/kernel/debug/devices_deferred`、PPE/nvmem/DSA 相关 dmesg、br-lan 成员、各口 MAC。
+
+只关心要点：
+
+```sh
+ip -o link | grep -E ' (lan|wan)[0-9]*'        # lan1..4 / wan 都在（这次修的核心）
+cat /sys/class/net/lan1/address                # 应是 02:xx:... 且各口不同
 nft list ruleset | grep -i flowtable           # PPE 卸载表
-dmesg | grep -i ppe | head
+cat /sys/kernel/debug/devices_deferred         # 不该再有 ppe
 ```
 
 ## 上游致谢

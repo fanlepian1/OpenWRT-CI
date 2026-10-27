@@ -1,0 +1,64 @@
+赵云（RE-CS-06）：网口 MAC 不再依赖 ART/factory 分区
+
+上一版把 MAC 来源改成 GPT 的 0:ART 仍然不行，说明那台机器的 GPT 里没有
+名为 "0:ART" 的分区（或者分区节点始终没绑定），NVMEM provider 不注册。
+
+关键在 of_get_mac_address() 的顺序：它先查 nvmem cell。只要 DTS 里还挂着
+nvmem-cells，而该 cell 的 provider 没有 probe，nvmem_get_mac_address() 就返回
+-EPROBE_DEFER；ppe_port_mac_prepare()（0526-01）看到 -EPROBE_DEFER 就继续
+defer，于是 qcom-ppe 永远不 probe，lan1..4 / wan 一个都不会出现 ——
+现象就是"设备不存在"、br-lan 没成员、有线没有 IP。
+
+这里把 6 个消费者（port@1..4 + wifi0/wifi1）的 nvmem 引用全部去掉，
+直接给 mac-address，彻底不依赖任何分区。用户态（fanwrt-defaults 的
+50-fanwrt-mac）会再按 SoC 序列号派生一套唯一 MAC 覆盖掉，所以同一份固件
+刷多台机器也不会撞 MAC。
+
+--- a/target/linux/qualcommbe/dts/ipq5322-re-cs-06.dts
++++ b/target/linux/qualcommbe/dts/ipq5322-re-cs-06.dts
+@@ -93,26 +93,22 @@
+ 	ports {
+ 		port@1 {
+ 			label = "lan1";
+-			nvmem-cells = <&lan_macaddr 0>;
+-			nvmem-cell-names = "mac-address";
++			mac-address = [02 46 57 00 00 01];
+ 		};
+ 
+ 		port@2 {
+ 			label = "lan2";
+-			nvmem-cells = <&lan_macaddr 0>;
+-			nvmem-cell-names = "mac-address";
++			mac-address = [02 46 57 00 00 02];
+ 		};
+ 
+ 		port@3 {
+ 			label = "lan3";
+-			nvmem-cells = <&lan_macaddr 0>;
+-			nvmem-cell-names = "mac-address";
++			mac-address = [02 46 57 00 00 03];
+ 		};
+ 
+ 		port@4 {
+ 			label = "wan";
+-			nvmem-cells = <&wan_macaddr 0>;
+-			nvmem-cell-names = "mac-address";
++			mac-address = [02 46 57 00 00 11];
+ 		};
+ 	};
+ };
+@@ -228,12 +224,10 @@
+ 
+ &wifi0 {
+ 	qcom,board-id = <22>;
+-	nvmem-cells = <&lan_macaddr 2>;
+-	nvmem-cell-names = "mac-address";
++	mac-address = [02 46 57 00 00 21];
+ };
+ 
+ &wifi1 {
+ 	qcom,board-id = <2>;
+-	nvmem-cells = <&lan_macaddr 3>;
+-	nvmem-cell-names = "mac-address";
++	mac-address = [02 46 57 00 00 22];
+ };

@@ -1,0 +1,52 @@
+#!/bin/sh
+# FanWRT：给 lan1..4 / wan / wifi-iface 派生一套唯一 MAC（不依赖 factory / ART）
+#
+# DT 里已经用固定 mac-address 保证 qcom-ppe 能 probe（网口才会出现），
+# 这里再按本机 SoC 序列号派生一次，写进 UCI，避免同一份固件刷多台机器撞 MAC。
+# 想用固定值就改 network 里 mac_* 段或 wireless 的 macaddr。
+
+export LC_ALL=C
+
+[ -f /etc/config/network ] || exit 0
+
+seed=""
+for f in /sys/devices/soc0/serial_number /proc/device-tree/serial-number \
+	 /sys/block/mmcblk0/device/cid; do
+	[ -r "$f" ] || continue
+	seed="$seed$(cat "$f" 2>/dev/null)"
+done
+
+[ -n "$seed" ] || exit 0
+
+h=$(printf '%s' "$seed" | md5sum | cut -c1-10)
+BASE="02:$(printf '%s' "$h" | sed 's/\(..\)/\1:/g; s/:$//')"
+
+mac_add() {
+	last=$(printf '%d' "0x${1##*:}" 2>/dev/null)
+	[ -n "$last" ] || { printf '%s' "$1"; return; }
+	printf '%s:%02x' "${1%:*}" $(( (last + $2) % 256 ))
+}
+
+i=1
+for d in lan1 lan2 lan3 lan4; do
+	uci -q get "network.mac_$d" >/dev/null 2>&1 || uci -q set "network.mac_$d=device"
+	uci -q set "network.mac_$d.name=$d"
+	uci -q set "network.mac_$d.macaddr=$(mac_add "$BASE" "$i")"
+	i=$((i + 1))
+done
+
+uci -q get network.mac_wan >/dev/null 2>&1 || uci -q set network.mac_wan=device
+uci -q set network.mac_wan.name=wan
+uci -q set network.mac_wan.macaddr=$(mac_add "$BASE" 17)
+
+i=33
+for sec in $(uci show wireless 2>/dev/null | sed -n "s/^\(wireless\.[^.=]*\)=wifi-iface$/\1/p"); do
+	uci -q set "$sec.macaddr=$(mac_add "$BASE" "$i")"
+	i=$((i + 1))
+done
+
+uci -q commit network
+uci -q commit wireless
+
+logger -t fanwrt-mac "derived MACs from SoC serial: $BASE"
+exit 0
