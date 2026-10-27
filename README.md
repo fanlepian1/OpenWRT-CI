@@ -8,29 +8,57 @@
 - Wi-Fi：`FanWRT` / `12345678`（首次开机后请自行修改）
 - 主题：[argon](https://github.com/sbwml/luci-theme-argon)（含 `luci-app-argon-config`）
 
-## 有线口的修复（MAC / PPE deferred probe）
+## 有线口的修复（照抄 WoChen5770/openwrt_build 的赵云方案）
 
-上游 DTS 把 lan1..4、wan、wifi0/wifi1 的 MAC 都挂在 nvmem cell 上（`lan_macaddr` / `wan_macaddr`，来自 `block/block-device/partname="factory"` 的 ART/factory 分区）。
+上游 DTS 把 lan1..4、wan、wifi0/wifi1 的 MAC 都挂在 nvmem cell 上，来源是
+`block/block-device/partname="factory"` 那个分区。`of_get_mac_address()` **先查 nvmem**，
+只要 provider 没注册就返回 `-EPROBE_DEFER`，树里的
+`0526-01-net-ethernet-qualcomm-ppe-defer-for-nvmem-mac` 就会让 `ppe_port_mac_prepare()`
+一直 defer —— **qcom-ppe 永远不 probe，lan1..4 / wan 一个都不出现**，
+br-lan 没成员，有线没有 IP（"设备不存在"）。
 
-`of_get_mac_address()` 的顺序是**先查 nvmem**、再查 `mac-address`。只要 DTS 里还挂着 `nvmem-cells`，而那个分区节点没有绑定（GPT 里没有对应名字，或者分区被重刷掉了），`nvmem_get_mac_address()` 就返回 `-EPROBE_DEFER`，树里的 `0526-01-net-ethernet-qualcomm-ppe-defer-for-nvmem-mac` 会让 `ppe_port_mac_prepare()` 继续 defer —— **qcom-ppe 永远停在 deferred probe，lan1..4 / wan 一个都不出现**，br-lan 没有成员，有线自然拿不到 IP。表现就是"设备不存在"。
+### 照抄的部分（原样，字节级一致）
 
-所以分两层修（都在 `Patches/`，由 `Scripts/Patches.sh` 应用，失败会让构建直接红掉）：
+| 补丁 | 作用 | 开关 |
+| --- | --- | --- |
+| `Patches/jdcloud-re-cs-06-emmc-mac-nvmem.patch` | 分区节点换成 `gpt-partitions` + `partname="0:ART"`（厂商 GPT 里 ART 的名字） | **必需** |
+| `Patches/jdcloud-re-cs-06-lzma-kernel.patch` | `FitImage` → `FitImageLzma`，保留 7 MiB 内核槽位容纳 BTF | `Config/LZMA_KERNEL`（默认关，需 U-Boot 支持 LZMA/FIT） |
+| `Patches/dawn-runtime-fixes.patch` | DAWN 运行期修复 | `Config/DAWN_PATCH`（默认关，用 DAWN 才需要） |
 
-1. `jdcloud-re-cs-06-emmc-mac-nvmem.patch`：分区节点从 legacy `block/block-device` 换成 `gpt-partitions` + `partname="0:ART"`（厂商 GPT 里 ART 的名字）。**这一层只在 GPT 真有 `0:ART` 时生效。**
-2. `jdcloud-re-cs-06-fixed-mac.patch`：**根治层** —— 把 6 个消费者的 `nvmem-cells` 全删掉，直接给 `mac-address`：
+前两个是 WoChen5770 仓库里的原文件，`Scripts/Patches.sh` 直接 `patch -p1`。
+
+**LZMA 那个默认不开**：它会把内核镜像格式换掉，U-Boot 不支持 LZMA/FIT 就开不了机。
+确认你的引导器兼容后，`touch Config/LZMA_KERNEL` 重新构建即可。
+
+### 额外保险层（我们加的，默认开）
+
+`Patches/jdcloud-re-cs-06-fixed-mac.patch`：把 6 处 nvmem MAC 消费者
+（port@1..4 + wifi0/wifi1）换成 DT 的 `mac-address`
 
 ```dts
 port@1 { label = "lan1"; mac-address = [02 46 57 00 00 01]; };
-port@2 { label = "lan2"; mac-address = [02 46 57 00 00 02]; };
-port@3 { label = "lan3"; mac-address = [02 46 57 00 00 03]; };
 port@4 { label = "wan";  mac-address = [02 46 57 00 00 11]; };
 &wifi0 { mac-address = [02 46 57 00 00 21]; };
-&wifi1 { mac-address = [02 46 57 00 00 22]; };
 ```
 
-这样 `of_get_mac_address()` 直接命中 `mac-address`，完全不碰 nvmem，PPE 立刻 probe，**不依赖任何分区存不存在**。
+这样 `of_get_mac_address()` 直接命中 `mac-address`，根本不碰 nvmem，
+**即使 GPT 里没有 `0:ART` 分区，网口也照样出现**。只在照抄方案不生效时才会用到，
+放一个 `Config/NO_FIXED_MAC` 文件就能彻底回到纯照抄状态。
 
-之后 `fanwrt-defaults` 的 `50-fanwrt-mac` 会按 SoC 序列号派生一套唯一 MAC 写进 UCI（避免同一份固件刷多台撞 MAC）；想改就在 `network` 的 `mac_lan1..4` / `mac_wan` 段或 `wireless` 的 `macaddr` 里改。
+MAC 身份由 `fanwrt-defaults` 的 `50-fanwrt-mac` 按 SoC 序列号派生后写进 UCI
+（`network.mac_lan1..4` / `mac_wan` / `wireless.macaddr`），同一份固件刷多台不会撞。
+
+### 配置门禁（照抄他们的 required / expected_config 思路）
+
+`Scripts/CheckConfig.sh` 在 `make defconfig` 之后跑：
+
+- 硬门禁：平台/设备、`fanwrt-defaults`、`luci-app-giwifi`、`ua3f`、`luci-app-homeproxy`、
+  `adguardhome`、`luci-theme-argon`、`luci-app-argon-config`、`luci-app-upnp`、
+  `miniupnpd-nftables`、`kmod-usb-printer`、`luci-app-usb-printer`、`kmod-nft-*`、`kmod-sched-bpf`
+- 补丁生效检查：DTS 里必须有 `gpt-partitions`（和 `mac-address`，除非关了保险层）
+- 禁止项：`luci-app-fanmac`、`luci-theme-aurora` 不许出现
+
+任一项不过 → 构建直接失败，不会发一个"编译成功但功能没进去"的固件。
 
 ## PPE 硬件加速
 
@@ -54,7 +82,7 @@ PPE 硬件流表由 qualcommbe 的 `net-ethernet-qualcomm PPE` 系列补丁提�
 - 手动：Actions → **BE6500** → Run workflow；勾 `TEST` 只生成 `.config` 不编译固件
 - 自动：推送到 `Config/`、`Scripts/`、`Packages/`、`Patches/`、`BE6500.yml`、`WRT-CORE.yml` 时触发
 - 产物：Releases 里 `...-qualcommbe-ipq53xx-jdcloud_re-cs-06-squashfs-sysupgrade-...bin`
-- 编译流程：`Update Feeds → Custom Packages（拉插件 + 打补丁）→ Custom Settings（写死配置 + 主机名/Wi-Fi/IP）→ Compile → Release`
+- 编译流程：`Update Feeds → Custom Packages（拉插件 + 打补丁）→ Custom Settings（写死配置 + 主机名/Wi-Fi/IP + 配置门禁）→ Compile → Release`
 
 ## 保留的插件
 
@@ -97,7 +125,9 @@ OpenWrt 的 `hplip` 源包只编了 Sane 扫描后端（上游 `--disable-hpcups
 Config/IPQ53XX.txt             平台 + 设备
 Config/GENERAL.txt             插件 / 内核 / 组件开关
 Scripts/Packages.sh            拉第三方插件（argon、homeproxy、UA3F、本地包）
-Scripts/Patches.sh             打 Device Tree / PPPoE 补丁
+Scripts/Patches.sh             打 Device Tree / PPPoE 补丁（照抄 WoChen5770 方案）
+Scripts/CheckConfig.sh         配置门禁（缺项/补丁没生效就红）
+Scripts/ppe-pppoe-fix.py       QCA4B tagged PPPoE（按内容自适应上游改名）
 Scripts/Settings.sh            主机名、Wi-Fi、IP、主题
 Scripts/Handles.sh             插件补丁（argon 配色/菜单）
 Patches/                       jdcloud-re-cs-06 的 DTS 与 PPPoE 补丁

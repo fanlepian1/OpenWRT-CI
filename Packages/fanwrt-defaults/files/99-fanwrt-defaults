@@ -17,5 +17,18 @@ uci -q set firewall.@defaults[0].flow_offloading='1'
 uci -q set firewall.@defaults[0].flow_offloading_hw='1'
 uci -q commit firewall
 
+# BBR + fq（赵云这套默认也是这个组合）
+modprobe tcp_bbr 2>/dev/null || :
+modprobe sch_fq 2>/dev/null || :
+if [ ! -f /etc/sysctl.d/99-fanwrt-bbr.conf ]; then
+	cat > /etc/sysctl.d/99-fanwrt-bbr.conf <<'EOF'
+net.ipv4.tcp_congestion_control=bbr
+net.core.default_qdisc=fq
+net.ipv4.tcp_mtu_probing=1
+EOF
+fi
+sysctl -w net.core.default_qdisc=fq 2>/dev/null || :
+sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null || :
+
 logger -t fanwrt-defaults "flow offload enabled (software + PPE hardware)"
 exit 0
