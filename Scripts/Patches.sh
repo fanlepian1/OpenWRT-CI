@@ -1,13 +1,12 @@
 #!/bin/bash
 # FanWRT 源码补丁，在 ./wrt（OpenWrt 源码根）里执行
 #
-# Patches/jdcloud-re-cs-06-emmc-mac-nvmem.patch
-#   DTS 的 MAC 来源从 legacy block/factory 换成 GPT 的 0:ART，
-#   修 qcom-ppe deferred probe（有线口一个都不出来）
-# Patches/jdcloud-re-cs-06-qca4b-pppoe.patch
-#   QCA4B 持久 VP 允许承载 tagged PPPoE，PPE 才能对 PPPoE 生效
-# Patches/jdcloud-re-cs-06-fixed-mac.patch
-#   网口/Wi-Fi 的 MAC 改由 DT 的 mac-address 提供，去掉对 ART/factory 的依赖
+# Patches/jdcloud-re-cs-06-emmc-mac-nvmem.patch   （必需）
+#   分区节点换 gpt-partitions + partname="0:ART"；GPT 里真有 0:ART 时生效
+# Patches/jdcloud-re-cs-06-fixed-mac.patch       （必需）
+#   网口/Wi-Fi 的 MAC 改由 DT mac-address 提供，去掉 ART/factory nvmem 依赖
+# Scripts/ppe-pppoe-fix.py                       （可选）
+#   允许 QCA4B 持久 VP 承载 tagged PPPoE；上游补丁文件名会变，用脚本就地改
 
 set -uo pipefail
 
@@ -40,5 +39,14 @@ APPLY() {
 }
 
 APPLY "jdcloud-re-cs-06-emmc-mac-nvmem.patch"
-APPLY "jdcloud-re-cs-06-qca4b-pppoe.patch"
 APPLY "jdcloud-re-cs-06-fixed-mac.patch"
+
+# PPE 的 PPPoE 补丁是可选项：上游会重命名/重构 PPE 补丁系列，
+# 失败只告警，不影响网口 MAC 的修复
+echo " "
+echo "== ppe-pppoe-fix.py (optional)"
+if python3 "$GITHUB_WORKSPACE/Scripts/ppe-pppoe-fix.py"; then
+	echo "   OK"
+else
+	echo "   跳过（上游 PPE/PPPoE 代码结构已变化，不影响有线口）"
+fi
