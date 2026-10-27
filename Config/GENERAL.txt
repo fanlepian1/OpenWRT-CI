@@ -7,8 +7,6 @@ CONFIG_PACKAGE_luci-app-homeproxy=y
 CONFIG_PACKAGE_ua3f=y
 #GIWIFI 校园网自动登录
 CONFIG_PACKAGE_luci-app-giwifi=y
-#MAC 兜底（刷大分区丢了 factory 也能用有线/无线）
-CONFIG_PACKAGE_luci-app-fanmac=y
 
 #UPnP IGD + PCP/NAT-PMP 服务（nftables 版，自带 PCP 支持）
 CONFIG_PACKAGE_luci-app-upnp=y

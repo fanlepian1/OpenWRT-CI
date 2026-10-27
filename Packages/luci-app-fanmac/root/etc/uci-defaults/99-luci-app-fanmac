@@ -1,4 +1,0 @@
-#!/bin/sh
-[ -x /etc/init.d/fanmac ] && /etc/init.d/fanmac enable >/dev/null 2>&1
-rm -f /tmp/luci-indexcache* >/dev/null 2>&1
-exit 0

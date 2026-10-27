@@ -50,39 +50,6 @@ OpenWrt 的 `hplip` 源包只编译了 Sane 扫描后端（上游 Makefile 带 `
 - 手动跑一次：`/usr/sbin/giwifi-login --once`。
 - 门户地址、AES 密钥各校不同：抓一次学校登录页的 `gportal/web/login` 就能看到 `input[name=iv]` 和请求里的 `data`/`iv`。
 
-## factory 分区丢了（MAC 全零 → 有线没 IP / 无线起不来）
-
-京东云 BE6500（赵云）和太乙的 MAC 存在 `factory` 分区里，DTS 是这么取的：
-
-```dts
-&sdhc { card@0 { block { partitions { block-partition-factory {
-    partname = "factory";            // 按 GPT 分区名找
-    nvmem-layout { fixed-layout; lan_macaddr@0; wan_macaddr@6; }
-}}}}}
-```
-
-刷常规大分区后 GPT 里没有 `factory` 分区 → nvmem cell 不存在 → lan1..4 / wan / wifi0 / wifi1 的 MAC 全变 `00:00:00:00:00:00` → 内核 `br_add_if()` 拒绝把全零 MAC 的端口加进 `br-lan` → 有线没有 DHCP/IP，无线也一起废。
-
-**本固件内置 `luci-app-fanmac` 兜底**（网络 → MAC 兜底）：
-
-1. `factory` 分区能读到有效 MAC（`/dev/disk/by-partlabel/factory`、`/dev/mmcblk0p25`）→ **原样沿用**，factory 还在的机器行为不变
-2. 读不到 → 用 `/etc/fanmac.macs` 里上次持久化的值
-3. 还没有 → 从 SoC 序列号 / eMMC CID 派生 `02:xx:xx:xx:xx:xx`（本机管理 + 单播）并写盘
-4. 写进 `/etc/config/network` 的 `config device`（lan*/wan）、`br-lan`、以及每个 `wifi-iface` 的 `macaddr`
-5. 立刻 `ip link set ... address` 一遍，保证 netifd 建桥前 MAC 已合法（`/etc/init.d/fanmac` START=18，早于 wpad/network）
-
-手动干预：
-
-```sh
-fanmac show                      # 看当前配置 / 持久化值 / 各口 MAC
-uci set fanmac.settings.lan_mac='02:aa:bb:cc:dd:01'
-uci set fanmac.settings.wan_mac='02:aa:bb:cc:dd:02'
-uci commit fanmac && /etc/init.d/fanmac restart
-fanmac reset                     # 丢掉派生值重新生成
-```
-
-如果**连无线 phy 都不出现**（`ls /sys/class/ieee80211/` 是空的，说明驱动把 "没有 MAC" 当硬错误 probe 失败），在仓库根放一个 `Config/NOMAC_DTS` 文件再编译一次：`Scripts/Patches.sh` 会把 jdcloud DTS 里 `&wifi0/&wifi1` 和各 switch 端口对 factory nvmem cell 的引用摘掉，让驱动自己起来，再由 fanmac 统一写 MAC。
-
 ## 目录说明
 
 ```
