@@ -7,6 +7,13 @@ CONFIG_PACKAGE_luci-app-homeproxy=y
 CONFIG_PACKAGE_ua3f=y
 #GIWIFI 校园网自动登录
 CONFIG_PACKAGE_luci-app-giwifi=y
+#AdGuard Home（DNS 去广告，LuCI: 服务 -> AdGuard Home）
+CONFIG_PACKAGE_adguardhome=y
+CONFIG_PACKAGE_luci-app-adguardhome=y
+CONFIG_PACKAGE_luci-i18n-adguardhome-zh-cn=y
+
+#FanWRT 默认项：防火墙 flow offload + PPE 硬件卸载
+CONFIG_PACKAGE_fanwrt-defaults=y
 
 #UPnP IGD + PCP/NAT-PMP 服务（nftables 版，自带 PCP 支持）
 CONFIG_PACKAGE_luci-app-upnp=y

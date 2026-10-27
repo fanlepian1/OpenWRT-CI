@@ -3,5 +3,3 @@ CONFIG_TARGET_qualcommbe=y
 CONFIG_TARGET_qualcommbe_ipq53xx=y
 #设备列表（京东云 BE6500，代号赵云，IPQ5332 + Wi-Fi 7）
 CONFIG_TARGET_DEVICE_qualcommbe_ipq53xx_DEVICE_jdcloud_re-cs-06=y
-#备用：同平台京东云无 WiFi 型号，用不到可以删掉这一行
-CONFIG_TARGET_DEVICE_qualcommbe_ipq53xx_DEVICE_jdcloud_re-cs-08=y

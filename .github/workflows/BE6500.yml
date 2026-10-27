@@ -24,6 +24,7 @@ on:
       - 'Config/**'
       - 'Scripts/**'
       - 'Packages/**'
+      - 'Patches/**'
       - '.github/workflows/BE6500.yml'
       - '.github/workflows/WRT-CORE.yml'
 
@@ -53,7 +54,7 @@ jobs:
       #编译配置
       WRT_CONFIG: ${{matrix.CONFIG}}
       #默认主题
-      WRT_THEME: aurora
+      WRT_THEME: argon
       #默认主机名
       WRT_NAME: FanWRT
       #默认WIFI名称

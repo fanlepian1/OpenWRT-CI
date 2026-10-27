@@ -1,0 +1,21 @@
+#!/bin/sh
+# FanWRT 默认设置：打开防火墙 flow offload，PPE 走硬件卸载
+#
+# flow_offloading     = 1  nftables flowtable（软件路径，必需的开关）
+# flow_offloading_hw  = 1  flowtable 卸载到硬件，IPQ5332 上就是 PPE
+#
+# PPE 硬件流表由 qualcommbe 的 net-ethernet-qualcomm PPE 系列补丁提供
+# （0507 绑定 netfilter flowtables、0509 PPPoE、0510 VLAN 上行等），
+# 需要 kmod-nft-offload。若某条链路在硬件卸载下异常，
+# 把 flow_offloading_hw 改回 0 即可退回纯软件转发。
+
+[ -f /etc/config/firewall ] || exit 0
+
+uci -q get firewall.@defaults[0] >/dev/null 2>&1 || uci -q add firewall defaults
+
+uci -q set firewall.@defaults[0].flow_offloading='1'
+uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+uci -q commit firewall
+
+logger -t fanwrt-defaults "flow offload enabled (software + PPE hardware)"
+exit 0

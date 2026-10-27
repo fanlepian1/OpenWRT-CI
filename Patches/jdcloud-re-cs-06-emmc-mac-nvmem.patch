@@ -1,0 +1,65 @@
+赵云（RE-CS-06）：MAC 从 GPT 的 0:ART 分区读，而不是 legacy 的 factory
+
+厂商 GPT 把 MAC 所在的 ART 分区标为 "0:ART"，而 qualcommbe 的内核要求
+mmc-card 下面直接挂 gpt-partitions 节点。上游 DTS 用的是
+block / compatible="block-device" / partname="factory" 这条 legacy 匹配路径，
+不会注册 NVMEM provider（参见 0526-01-net-ethernet-qualcomm-ppe-defer-for-nvmem-mac），
+结果 qcom-ppe 一直停在 deferred probe：lan1..4 / wan 一个都不出现，
+br-lan 没有成员，有线拿不到 IP，wifi0/wifi1 的 MAC 也一起取不到。
+
+改成 gpt-partitions + partname="0:ART" 后 NVMEM 能正常注册，MAC 从 ART 分区读。
+前提：设备的 GPT 里有名为 "0:ART" 的分区（ls /dev/disk/by-partlabel/ 可见）。
+
+--- a/target/linux/qualcommbe/dts/ipq5322-re-cs-06.dts
++++ b/target/linux/qualcommbe/dts/ipq5322-re-cs-06.dts
+@@ -180,29 +180,27 @@
+ 		compatible = "mmc-card";
+ 		reg = <0>;
+ 
+-		block {
+-			compatible = "block-device";
+-
+-			partitions {
+-				block-partition-factory {
+-					partname = "factory";
+-
+-					nvmem-layout {
+-						compatible = "fixed-layout";
+-						#address-cells = <1>;
+-						#size-cells = <1>;
+-
+-						lan_macaddr: macaddr@0 {
+-							compatible = "mac-base";
+-							reg = <0x0 0x6>;
+-							#nvmem-cell-cells = <1>;
+-						};
+-
+-						wan_macaddr: macaddr@6 {
+-							compatible = "mac-base";
+-							reg = <0x6 0x6>;
+-							#nvmem-cell-cells = <1>;
+-						};
++		partitions {
++			compatible = "gpt-partitions";
++
++			block-partition-art {
++				partname = "0:ART";
++
++				nvmem-layout {
++					compatible = "fixed-layout";
++					#address-cells = <1>;
++					#size-cells = <1>;
++
++					lan_macaddr: macaddr@0 {
++						compatible = "mac-base";
++						reg = <0x0 0x6>;
++						#nvmem-cell-cells = <1>;
++					};
++
++					wan_macaddr: macaddr@6 {
++						compatible = "mac-base";
++						reg = <0x6 0x6>;
++						#nvmem-cell-cells = <1>;
+ 					};
+ 				};
+ 			};

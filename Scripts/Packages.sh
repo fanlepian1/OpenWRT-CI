@@ -43,8 +43,8 @@ UPDATE_PACKAGE() {
 }
 
 # ============ 主题 ============
-UPDATE_PACKAGE "aurora" "eamonxg/luci-theme-aurora" "master"
-UPDATE_PACKAGE "aurora-config" "eamonxg/luci-app-aurora-config" "master"
+# argon 主题（同仓库内含 luci-theme-argon + luci-app-argon-config）
+UPDATE_PACKAGE "argon" "sbwml/luci-theme-argon" "openwrt-25.12"
 
 # ============ 科学上网（HomeProxy + sing-box 内核） ============
 UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "sing-box luci-app-homeproxy"
